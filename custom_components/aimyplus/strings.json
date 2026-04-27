@@ -1,0 +1,15 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "aimyPlus",
+        "description": "Enter your aimyPlus login details. The site slug is the first part of the URL, for example horizons from horizons.aimyplus.com.",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "site_slug": "Site slug"
+        }
+      }
+    }
+  }
+}

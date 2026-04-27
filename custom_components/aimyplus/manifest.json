@@ -1,0 +1,12 @@
+{
+  "domain": "aimyplus",
+  "name": "aimyPlus",
+  "codeowners": ["@codyc1515"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/codyc1515/ha-aimyplus",
+  "integration_type": "device",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/codyc1515/ha-aimyplus/issues",
+  "version": "0.1.0"
+}
