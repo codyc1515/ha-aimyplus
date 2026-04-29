@@ -12,6 +12,10 @@ AMOUNT_RE = re.compile(
     r"Current\s+Amount\s+Owing:\s*<b[^>]*>\s*\$?\s*([0-9,]+(?:\.[0-9]{1,2})?)",
     re.IGNORECASE | re.DOTALL,
 )
+ALL_INVOICES_PAID_RE = re.compile(
+    r"All\s+your\s+invoices\s+are\s+currently\s+paid\s*-\s*Thank\s+you!",
+    re.IGNORECASE,
+)
 PARENT_ID_RE = re.compile(
     r"(?:parentId=|parentId:\s*|parentId&quot;:\s*&quot;|parentId['\"]?\s*[:=]\s*['\"]?)(\d+)",
     re.IGNORECASE,
@@ -94,6 +98,9 @@ def parse_amount_owing(html):
         return None
 
     html = unescape(html)
+    if ALL_INVOICES_PAID_RE.search(html):
+        return 0.00
+
     match = AMOUNT_RE.search(html)
     if not match:
         return None

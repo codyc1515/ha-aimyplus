@@ -2,6 +2,7 @@ from datetime import timedelta
 
 from aiohttp import CookieJar
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.const import CURRENCY_DOLLAR
 #from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, CoordinatorEntity
 
@@ -39,7 +40,7 @@ class AimyPlusAmountOwingSensor(CoordinatorEntity, SensorEntity):
     _attr_name = "Aimy Plus Amount Owing"
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
-    _attr_native_unit_of_measurement = "NZD"
+    _attr_native_unit_of_measurement = CURRENCY_DOLLAR
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator)
