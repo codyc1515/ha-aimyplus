@@ -4,6 +4,7 @@ from aiohttp import CookieJar
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import CURRENCY_DOLLAR
 #from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, CoordinatorEntity
 
 from .api import AimyPlusApi
@@ -37,14 +38,22 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class AimyPlusAmountOwingSensor(CoordinatorEntity, SensorEntity):
-    _attr_name = "Aimy Plus Amount Owing"
+    _attr_name = "Amount Owing"
+    _attr_has_entity_name = True
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = CURRENCY_DOLLAR
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator)
+        slug = entry.data[CONF_SITE_SLUG]
         self._attr_unique_id = f"{entry.entry_id}_amount_owing"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, slug)},
+            name=slug,
+            manufacturer="Aimy Plus",
+            model="Site",
+        )
 
     @property
     def native_value(self):

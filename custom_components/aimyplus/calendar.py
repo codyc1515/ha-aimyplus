@@ -4,11 +4,12 @@ import logging
 from datetime import datetime, timedelta
 
 from homeassistant.components.calendar import CalendarEntity, CalendarEvent
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, CoordinatorEntity
 from homeassistant.util.dt import as_local
 
 from .api import booking_to_events
-from .const import DOMAIN
+from .const import CONF_SITE_SLUG, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,12 +44,19 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class AimyPlusCalendar(CoordinatorEntity, CalendarEntity):
-    _attr_name = "Aimy Plus"
-    _attr_has_entity_name = False
+    _attr_name = "Calendar"
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry, api):
         super().__init__(coordinator)
+        slug = entry.data[CONF_SITE_SLUG]
         self._attr_unique_id = f"{entry.entry_id}_calendar"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, slug)},
+            name=slug,
+            manufacturer="Aimy Plus",
+            model="Site",
+        )
         self.api = api
 
     @property

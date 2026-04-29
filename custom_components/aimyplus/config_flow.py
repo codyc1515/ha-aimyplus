@@ -19,11 +19,12 @@ class AimyPlusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             slug = user_input[CONF_SITE_SLUG].strip().lower()
             user_input[CONF_SITE_SLUG] = slug
 
-            await self.async_set_unique_id(f"{slug}:{user_input[CONF_USERNAME]}")
+            # One config entry per site slug so related entities stay grouped.
+            await self.async_set_unique_id(slug)
             self._abort_if_unique_id_configured()
 
             return self.async_create_entry(
-                title=f"Aimy Plus {slug}",
+                title=slug,
                 data=user_input,
             )
 
