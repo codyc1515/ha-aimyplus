@@ -47,10 +47,11 @@ class AimyPlusAmountOwingSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, entry):
         super().__init__(coordinator)
         slug = entry.data[CONF_SITE_SLUG]
+        display_name = slug.capitalize()
         self._attr_unique_id = f"{entry.entry_id}_amount_owing"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, slug)},
-            name=slug,
+            name=display_name,
             manufacturer="Aimy Plus",
             model="Site",
         )
