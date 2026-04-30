@@ -1,39 +1,13 @@
-from datetime import timedelta
-
-from aiohttp import CookieJar
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import CURRENCY_DOLLAR
-#from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, CoordinatorEntity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .api import AimyPlusApi
-from .const import (
-    CONF_SITE_SLUG,
-    CONF_PASSWORD,
-    CONF_USERNAME,
-    DOMAIN,
-)
-
-import logging
-_LOGGER = logging.getLogger(__name__)
-
-SCAN_INTERVAL = timedelta(hours=1)
+from .const import CONF_SITE_SLUG, DOMAIN
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    api = hass.data[DOMAIN][entry.entry_id]["api"]
-
-    coordinator = DataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name="Aimy Plus amount owing",
-        update_method=api.get_amount_owing,
-        update_interval=SCAN_INTERVAL,
-    )
-
-    await coordinator.async_config_entry_first_refresh()
-
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     async_add_entities([AimyPlusAmountOwingSensor(coordinator, entry)])
 
 
@@ -58,4 +32,4 @@ class AimyPlusAmountOwingSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        return self.coordinator.data
+        return (self.coordinator.data or {}).get("amount_owing")

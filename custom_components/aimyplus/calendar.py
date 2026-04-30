@@ -1,53 +1,25 @@
 from __future__ import annotations
 
-import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from homeassistant.components.calendar import CalendarEntity, CalendarEvent
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, CoordinatorEntity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.dt import as_local
 
-from .api import booking_to_events
 from .const import CONF_SITE_SLUG, DOMAIN
-
-_LOGGER = logging.getLogger(__name__)
-
-SCAN_INTERVAL = timedelta(hours=1)
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    api = hass.data[DOMAIN][entry.entry_id]["api"]
-
-    async def async_update_data():
-        now = datetime.now().astimezone()
-        try:
-            return await api.get_calendar_events(now - timedelta(days=30), now + timedelta(days=180))
-        except Exception:
-            _LOGGER.exception("Falling back to booking list because Aimy Plus calendar endpoint failed")
-            bookings = await api.get_bookings()
-            events = []
-            for booking in bookings:
-                events.extend(booking_to_events(booking))
-            return events
-
-    coordinator = DataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name="Aimy Plus calendar",
-        update_method=async_update_data,
-        update_interval=SCAN_INTERVAL,
-    )
-
-    await coordinator.async_config_entry_first_refresh()
-    async_add_entities([AimyPlusCalendar(coordinator, entry, api)])
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    async_add_entities([AimyPlusCalendar(coordinator, entry)])
 
 
 class AimyPlusCalendar(CoordinatorEntity, CalendarEntity):
     _attr_name = "Calendar"
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, entry, api):
+    def __init__(self, coordinator, entry):
         super().__init__(coordinator)
         slug = entry.data[CONF_SITE_SLUG]
         display_name = slug.capitalize()
@@ -58,14 +30,13 @@ class AimyPlusCalendar(CoordinatorEntity, CalendarEntity):
             manufacturer="Aimy Plus",
             model="Site",
         )
-        self.api = api
 
     @property
     def event(self):
         now = datetime.now().astimezone()
         future_events = [
             event
-            for event in self.coordinator.data or []
+            for event in (self.coordinator.data or {}).get("calendar_events", [])
             if as_local(event["end"]) >= now
         ]
 
@@ -76,15 +47,9 @@ class AimyPlusCalendar(CoordinatorEntity, CalendarEntity):
         return self._to_calendar_event(next_event)
 
     async def async_get_events(self, hass, start_date, end_date):
-        try:
-            events = await self.api.get_calendar_events(start_date, end_date)
-            return [self._to_calendar_event(event) for event in events]
-        except Exception:
-            _LOGGER.exception("Failed to fetch Aimy Plus calendar range; using cached events")
-
         return [
             self._to_calendar_event(event)
-            for event in self.coordinator.data or []
+            for event in (self.coordinator.data or {}).get("calendar_events", [])
             if as_local(event["end"]) >= start_date
             and as_local(event["start"]) <= end_date
         ]

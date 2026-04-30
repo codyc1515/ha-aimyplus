@@ -1,9 +1,14 @@
+import logging
+from json import JSONDecodeError, loads
 import re
 from datetime import datetime, timezone, timedelta
 from html import unescape
+from time import perf_counter
 from zoneinfo import ZoneInfo
 
 from .const import BASE_DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 MS_DATE_RE = re.compile(r"/Date\((\d+)\)/")
 LOCAL_TZ = ZoneInfo("Pacific/Auckland")
@@ -18,6 +23,10 @@ ALL_INVOICES_PAID_RE = re.compile(
 )
 PARENT_ID_RE = re.compile(
     r"(?:parentId=|parentId:\s*|parentId&quot;:\s*&quot;|parentId['\"]?\s*[:=]\s*['\"]?)(\d+)",
+    re.IGNORECASE,
+)
+REQUEST_VERIFICATION_TOKEN_RE = re.compile(
+    r'name="__RequestVerificationToken"\s+type="hidden"\s+value="([^"]+)"',
     re.IGNORECASE,
 )
 
@@ -120,18 +129,35 @@ def parse_parent_id(html):
     return int(match.group(1))
 
 
+def parse_request_verification_token(html):
+    if not html:
+        return None
+
+    match = REQUEST_VERIFICATION_TOKEN_RE.search(html)
+    if not match:
+        return None
+
+    return unescape(match.group(1))
+
+
 class AimyPlusApi:
-    def __init__(self, session, site_slug: str, username: str, password: str):
+    def __init__(self, session, site_slug: str, username: str, password: str, parent_id: int | None = None):
         self.session = session
         self.site_slug = site_slug.strip().lower()
         self.base_url = f"https://{self.site_slug}.{BASE_DOMAIN}"
         self.username = username
         self.password = password
         self._dashboard_html = None
-        self._parent_id = None
+        self._parent_id = parent_id
+        self._request_verification_token = None
+
+    @property
+    def parent_id(self) -> int | None:
+        return self._parent_id
 
     async def login(self):
         login_url = f"{self.base_url}/Account/Login?ReturnUrl=%2F"
+        started = perf_counter()
 
         async with self.session.post(
             login_url,
@@ -151,12 +177,13 @@ class AimyPlusApi:
             resp.raise_for_status()
             await resp.text()
 
-    async def get_dashboard_html(self, force_refresh=False):
-        if self._dashboard_html and not force_refresh:
-            return self._dashboard_html
+        _LOGGER.debug("Aimy Plus login completed in %.3f seconds", perf_counter() - started)
 
-        await self.login()
+    def _looks_like_login_page(self, text: str) -> bool:
+        return "Account/Login" in text or "name=\"UserName\"" in text
 
+    async def _fetch_dashboard(self):
+        started = perf_counter()
         async with self.session.get(
             f"{self.base_url}/Parent/ParentDashboard",
             headers={
@@ -164,11 +191,33 @@ class AimyPlusApi:
                 "Referer": f"{self.base_url}/Account/Login?ReturnUrl=%2f",
                 "User-Agent": "Mozilla/5.0",
             },
+            allow_redirects=True,
         ) as resp:
             resp.raise_for_status()
-            self._dashboard_html = await resp.text()
+            html = await resp.text()
 
+        _LOGGER.debug("Aimy Plus dashboard fetch completed in %.3f seconds", perf_counter() - started)
+        return html
+
+    async def get_dashboard_html(self, force_refresh=False):
+        if self._dashboard_html and not force_refresh:
+            return self._dashboard_html
+
+        html = await self._fetch_dashboard()
+        if self._looks_like_login_page(html):
+            await self.login()
+            html = await self._fetch_dashboard()
+
+        self._dashboard_html = html
+        token = parse_request_verification_token(html)
+        if token:
+            self._request_verification_token = token
         return self._dashboard_html
+
+    async def _ensure_security_context(self):
+        if self._request_verification_token is not None:
+            return
+        await self.get_dashboard_html()
 
     async def get_parent_id(self):
         if self._parent_id:
@@ -184,10 +233,14 @@ class AimyPlusApi:
         return parent_id
 
     async def get_bookings(self):
+        started = perf_counter()
         parent_id = await self.get_parent_id()
+        await self._ensure_security_context()
 
-        async with self.session.get(
+        data = await self._request_json_with_reauth(
+            "get",
             f"{self.base_url}/Parent/GetParentBookingList",
+            request_name="booking list",
             params={
                 "parentId": str(parent_id),
                 "isCurrentTerm": "false",
@@ -198,12 +251,12 @@ class AimyPlusApi:
                 "Referer": f"{self.base_url}/Parent/ParentDashboard",
                 "User-Agent": "Mozilla/5.0",
             },
-        ) as resp:
-            resp.raise_for_status()
-            data = await resp.json(content_type=None)
+        )
 
         if not data.get("Success"):
             raise RuntimeError("Aimy Plus returned Success=false")
+
+        _LOGGER.debug("Aimy Plus booking list fetch completed in %.3f seconds", perf_counter() - started)
 
         return [
             booking
@@ -213,13 +266,20 @@ class AimyPlusApi:
 
     async def get_calendar_events(self, start_date, end_date):
         """Fetch individual booking instances from the dashboard calendar endpoint."""
+        started = perf_counter()
         parent_id = await self.get_parent_id()
+        await self._ensure_security_context()
 
-        async with self.session.post(
+        start_value = start_date.date().isoformat() if hasattr(start_date, "date") else start_date.isoformat()
+        end_value = end_date.date().isoformat() if hasattr(end_date, "date") else end_date.isoformat()
+
+        data = await self._request_json_with_reauth(
+            "post",
             f"{self.base_url}/Parent/GetParentBookingCalender",
+            request_name="calendar",
             data={
-                "start": start_date.isoformat(),
-                "end": end_date.isoformat(),
+                "start": start_value,
+                "end": end_value,
                 "parentId": str(parent_id),
             },
             headers={
@@ -228,9 +288,7 @@ class AimyPlusApi:
                 "Referer": f"{self.base_url}/Parent/ParentDashboard",
                 "User-Agent": "Mozilla/5.0",
             },
-        ) as resp:
-            resp.raise_for_status()
-            data = await resp.json(content_type=None)
+        )
 
         if isinstance(data, dict):
             raw_events = data.get("events") or data.get("Events") or data.get("data") or data.get("Data") or []
@@ -243,11 +301,74 @@ class AimyPlusApi:
             if event:
                 events.append(event)
 
+        _LOGGER.debug(
+            "Aimy Plus calendar fetch completed in %.3f seconds for %s to %s (%d events)",
+            perf_counter() - started,
+            start_date.date(),
+            end_date.date(),
+            len(events),
+        )
+
         return events
 
     async def get_amount_owing(self):
+        total_started = perf_counter()
+        fetch_started = perf_counter()
         html = await self.get_dashboard_html(force_refresh=True)
-        return parse_amount_owing(html)
+        fetch_elapsed = perf_counter() - fetch_started
+
+        parse_started = perf_counter()
+        amount = parse_amount_owing(html)
+        parse_elapsed = perf_counter() - parse_started
+
+        _LOGGER.debug("Aimy Plus amount owing dashboard refresh completed in %.3f seconds", fetch_elapsed)
+        _LOGGER.debug("Aimy Plus amount owing parse completed in %.3f seconds", parse_elapsed)
+        _LOGGER.debug("Aimy Plus amount owing fetch+parse completed in %.3f seconds", perf_counter() - total_started)
+        return amount
+
+    async def _request_json_with_reauth(self, method: str, url: str, request_name: str, **kwargs):
+        request_func = getattr(self.session, method.lower())
+        last_error = None
+
+        for attempt in range(2):
+            request_kwargs = dict(kwargs)
+            headers = dict(request_kwargs.get("headers") or {})
+            if self._request_verification_token:
+                headers["RequestVerificationToken"] = self._request_verification_token
+                headers["X-RequestVerificationToken"] = self._request_verification_token
+                data = request_kwargs.get("data")
+                if isinstance(data, dict) and "__RequestVerificationToken" not in data:
+                    request_kwargs["data"] = {**data, "__RequestVerificationToken": self._request_verification_token}
+            request_kwargs["headers"] = headers
+
+            async with request_func(url, **request_kwargs) as resp:
+                resp.raise_for_status()
+                text = await resp.text()
+
+            try:
+                return loads(text)
+            except JSONDecodeError as err:
+                last_error = err
+                looks_like_html = text.lstrip().startswith("<")
+                looks_like_login = self._looks_like_login_page(text)
+
+                if attempt == 0 and (looks_like_login or looks_like_html):
+                    _LOGGER.debug(
+                        "Aimy Plus %s returned non-JSON (likely auth/session issue); re-authenticating and retrying",
+                        request_name,
+                    )
+                    await self.login()
+                    self._request_verification_token = None
+                    self._dashboard_html = None
+                    await self.get_dashboard_html(force_refresh=True)
+                    continue
+
+                snippet = re.sub(r"\s+", " ", text[:120]).strip()
+                raise RuntimeError(
+                    f"Aimy Plus {request_name} returned invalid JSON: {err}. Response starts with: {snippet!r}"
+                ) from err
+
+        raise RuntimeError(f"Aimy Plus {request_name} returned invalid JSON: {last_error}") from last_error
 
 
 def _description(*lines):
